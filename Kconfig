@@ -1,0 +1,35 @@
+mainmenu "LTE-M Asset Tracker"
+
+config TRACKER_SENSOR_INTERVAL_SEC
+	int "Sensor read and print interval in seconds (Phase 1)"
+	default 10
+
+config TRACKER_GNSS_TIMEOUT_SEC
+	int "GNSS fix timeout in seconds"
+	default 120
+
+config TRACKER_INTERVAL_SEC
+	int "Telemetry publish interval in seconds (Phase 2+)"
+	default 60
+
+config TRACKER_QUEUE_DEPTH
+	int "Offline payload queue depth"
+	default 10
+
+config TRACKER_MQTT_BROKER_HOST
+	string "MQTT broker hostname"
+	default "baf437c2f1704a97b9f5533ab7241808.s1.eu.hivemq.cloud"
+
+config TRACKER_MQTT_BROKER_PORT
+	int "MQTT broker port"
+	default 8883
+
+config TRACKER_MQTT_USERNAME
+	string "MQTT username"
+	default ""
+
+config TRACKER_MQTT_PASSWORD
+	string "MQTT password"
+	default ""
+
+source "Kconfig.zephyr"

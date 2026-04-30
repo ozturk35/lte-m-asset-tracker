@@ -1,0 +1,38 @@
+/*
+ * nRF9151-DK overlay — LTE-M Asset Tracker
+ *
+ * Pin facts (verified against nrf9151dk_nrf9151_common-pinctrl.dtsi):
+ *   UART0 (console): TX=P0.27, RX=P0.26  — do NOT use for I2C
+ *   arduino_i2c = &i2c2: SDA=P0.30 (D14), SCL=P0.31 (D15)
+ *   Arduino D2 = P0.02
+ */
+
+/* BMP280 on the Arduino I2C header (P0.30 SDA, P0.31 SCL) */
+&arduino_i2c {
+	bmp280: bme280@76 {
+		compatible = "bosch,bme280";
+		reg = <0x76>;
+		status = "okay";
+	};
+};
+
+/* DS18B20 1-Wire on P0.02 (Arduino D2)
+ * External 4.7 kΩ pull-up to 3.3 V on the bus line.
+ * GPIO_OPEN_DRAIN: nRF drives low to signal 0, releases to let pull-up drive high.
+ */
+/ {
+	w1: w1 {
+		compatible = "zephyr,w1-gpio";
+		gpios = <&gpio0 2 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ds18b20: ds18b20@0 {
+			compatible = "maxim,ds18b20";
+			family-code = <0x28>;
+			resolution = <12>;
+			reg = <0>;
+			status = "okay";
+		};
+	};
+};

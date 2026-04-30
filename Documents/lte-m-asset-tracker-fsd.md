@@ -123,9 +123,9 @@ and real PSM power numbers measured on hardware.
 | MCU + Modem | nRF9151 | — | Arm Cortex-M33, integrated LTE-M/NB-IoT + GNSS |
 | Development kit | nRF9151-DK | USB (J-Link CDC) | SLOT2, `/dev/bench_nrf91` |
 | Temperature sensor | DS18B20 | 1-Wire (P0.02) | 4.7 kΩ pull-up to 3.3 V; VDD from 3.3 V header |
-| Pressure/temp sensor | BMP280 | I2C (SDA P0.26, SCL P0.27) | Address 0x76 (SDO → GND) |
+| Pressure/temp sensor | BMP280 | I2C (SDA P0.30, SCL P0.31) | Address 0x76 (SDO → GND); Arduino SDA/SCL header (D14/D15) |
 | Power measurement | Nordic PPK2 | USB (standalone) | Source meter mode, 3.3 V supply to DUT |
-| SIM | iBASIS or Eseye (LTE-M) | nRF9151 SIM slot | Network: LTE-M Band 3/20 (assumed) |
+| SIM | Vodafone Turkey (local) | nRF9151 SIM slot | MCC/MNC 28602; APN: internet |
 
 **Connectivity**: LTE-M (Cat-M1), 3GPP Rel-13, PSM and eDRX supported by nRF9151.
 
@@ -168,6 +168,9 @@ CONFIG_MODEM_KEY_MGMT=y          # provision HiveMQ CA cert into modem security 
 CONFIG_NET_SOCKETS_SOCKOPT_TLS=y
 CONFIG_MQTT_LIB_TLS=y
 CONFIG_MQTT_HELPER_SEC_TAG=1     # security tag holding the CA cert (AT%CMNG)
+# Vodafone Turkey operator lock and APN (set via AT commands in lte_handler_init):
+# AT+COPS=1,2,"28602"            # manual operator selection, MCC/MNC 28602
+# AT+CGDCONT=1,"IP","internet"   # PDP context APN
 CONFIG_GNSS_MODULE=y             # or CONFIG_NRF_CLOUD_AGPS=n + direct GNSS API
 CONFIG_MQTT_LIB=y
 CONFIG_NET_SOCKETS=y
@@ -343,8 +346,10 @@ numbers documented for portfolio write-up.
 - MQTT connection to HiveMQ Cloud uses TLS (port 8883) with username/password
   authentication. The Let's Encrypt CA certificate must be provisioned into the
   nRF9151 modem's credential storage (AT%CMNG, security tag 1) before first boot.
-- The nRF9151 requires a valid LTE-M SIM (iBASIS, Eseye, or similar IoT SIM
-  supporting Cat-M1 in the operating region).
+- The nRF9151 uses a Vodafone Turkey SIM (MCC/MNC 28602). The modem must be
+  configured with manual operator selection (`AT+COPS=1,2,"28602"`) and PDP
+  context APN `"internet"` (`AT+CGDCONT=1,"IP","internet"`) via the
+  `lte_handler_init()` sequence before LTE-M attach.
 - PSM timer values are network-granted; the operator may assign values different
   from what the device requests. The 60-second duty cycle may extend accordingly.
 - Zephyr 1-Wire driver (`w1-zephyr-gpio`) performs bit-banging; DS18B20 pin must
@@ -363,7 +368,7 @@ numbers documented for portfolio write-up.
 | R-5 | BMP280 I2C address conflict or hardware not present | Low | Low | Probe at boot; log `[WARN] BMP280 not found`; continue without pressure field |
 | A-1 | BMP280 I2C address is 0x76 (SDO pin tied to GND) | Confirmed | — | — |
 | A-2 | DS18B20 connected to GPIO P0.02 with 4.7 kΩ pull-up to 3.3 V | Confirmed | — | — |
-| A-3 | Active LTE-M SIM with data plan in operating region is available | (assumed) | — | Confirm SIM provisioned before Phase 2 |
+| A-3 | Vodafone Turkey SIM (MCC/MNC 28602) with LTE-M data plan; APN "internet" | Confirmed | — | — |
 | A-4 | PPK2 used in source-meter mode replacing DK VDD rail | (assumed) | — | Follow PPK2 "Ampere Meter with Source" setup guide |
 | D-1 | nRF Connect SDK v2.7.x installed on build host | — | — | `west --version` to confirm; `west update` if stale |
 | D-2 | HiveMQ Cloud cluster reachable at port 8883; CA cert provisioned to modem | — | — | `mosquitto_pub --capath /etc/ssl/certs -h <host> -p 8883 -u nordic -P <pass> -t test -m hi` |
@@ -400,7 +405,11 @@ numbers documented for portfolio write-up.
 | Parameter | Value |
 |-----------|-------|
 | RAT | LTE-M (Cat-M1) |
-| APN | Operator default (assumed) |
+| Operator | Vodafone Turkey |
+| MCC/MNC | 28602 |
+| Operator lock | `AT+COPS=1,2,"28602"` (manual selection) |
+| APN | `internet` |
+| PDP context | `AT+CGDCONT=1,"IP","internet"` |
 | PDP type | IPv4 |
 | PSM TAU (T3412 requested) | 6 min (`"00100110"`) |
 | PSM active timer (T3324 requested) | 10 s (`"00000101"`) |
@@ -471,7 +480,7 @@ number and enqueue timestamp. The ring buffer is sized for 10 entries (≈ 5 KB)
 | Sensor | Interface | Pin(s) | Config |
 |--------|-----------|--------|--------|
 | DS18B20 | 1-Wire | P0.02 (Arduino D2) | 4.7 kΩ pull-up to 3.3 V; VDD from 3.3 V header; parasitic power disabled |
-| BMP280 | I2C | SDA P0.26 (Arduino SDA), SCL P0.27 (Arduino SCL) | 400 kHz; address 0x76 (SDO → GND) |
+| BMP280 | I2C | SDA P0.30 (Arduino SDA / D14), SCL P0.31 (Arduino SCL / D15) | 400 kHz; address 0x76 (SDO → GND) |
 
 ---
 
@@ -650,10 +659,10 @@ drains fully on reconnect, cadence resumes without manual intervention.
 
 | Symptom | Likely Cause | Diagnostic Steps | Corrective Action |
 |---------|-------------|-----------------|-------------------|
-| LTE-M never registers | SIM not provisioned, antenna off, wrong RAT | `AT+CEREG?` → check status; `AT%XMONITOR` → check band/PLMN | Verify SIM, attach antenna, check operator LTE-M coverage |
+| LTE-M never registers | Operator lock not applied, wrong APN, antenna off | `AT+CEREG?` → check status; `AT%XMONITOR` → check PLMN (expect 28602); `AT+CGDCONT?` → verify APN = "internet" | Re-send `AT+COPS=1,2,"28602"` and `AT+CGDCONT=1,"IP","internet"` via serial; check SIM seated; attach antenna |
 | GNSS no fix after 5 min | Indoor / obstructed sky, no A-GPS | Check location; enable A-GPS (nRF Cloud or manual almanac) | Move outdoors; add A-GPS almanac injection |
 | DS18B20 reads -127 °C | 1-Wire bus stuck low / no pull-up / wrong pin | Check 4.7 kΩ pull-up; verify GPIO P0.02 devicetree overlay | Add/replace pull-up; correct pin in `.overlay` |
-| BMP280 not found at 0x76 | SDO tied to VDD → address is 0x77; or no I2C pull-ups | `i2c_scan` shell command; check SDO pin voltage | Change address in devicetree to 0x77; add I2C pull-ups (4.7 kΩ) |
+| BMP280 not found at 0x76 | SDO tied to VDD → address is 0x77; wired to wrong header pins (P0.26/P0.27 are UART, not I2C) | `i2c_scan` shell command; verify physical wires on D14/D15 header pins (P0.30/P0.31) | Rewire to Arduino SDA/SCL (D14/D15); or change overlay address to 0x77 |
 | MQTT never connects | TLS handshake fails; CA cert not provisioned; DNS failure | Check `AT%CMNG=2,1,0` to verify cert; check DNS with `AT+CGDCONT?`; test from laptop with `mosquitto_pub --capath /etc/ssl/certs -h <host> -p 8883` | Reprovision CA cert; confirm APN provides DNS |
 | PSM sleep current > 10 µA | PSM not granted; periph clocks not gated; PPK2 includes DK regulator | Check AT%XMONITOR for granted T3324; check for active Zephyr timers | Verify PSM granted; use PPK2 in cut-rail mode (remove VDD jumper) |
 | Queue not draining | MQTT reconnect fails silently; queue code bug | Enable verbose MQTT log (`CONFIG_MQTT_LOG_LEVEL_DBG=y`) | Check reconnect callback; log queue depth each cycle |
@@ -676,6 +685,8 @@ drains fully on reconnect, cadence resumes without manual intervention.
 | MQTT broker port | 8883 | `CONFIG_TRACKER_MQTT_BROKER_PORT=8883` |
 | MQTT TLS security tag | 1 | `CONFIG_MQTT_HELPER_SEC_TAG=1` |
 | MQTT credentials | local non-VCS overlay | `CONFIG_TRACKER_MQTT_USERNAME` / `CONFIG_TRACKER_MQTT_PASSWORD` |
+| LTE-M operator | Vodafone Turkey | `AT+COPS=1,2,"28602"` in `lte_handler_init()` |
+| PDP APN | internet | `AT+CGDCONT=1,"IP","internet"` in `lte_handler_init()` |
 | PSM TAU requested | 6 min | `AT+CPSMS=1,,,"00100110","00000101"` |
 | PSM active timer requested | 10 s | (same AT command, second timer field) |
 | DS18B20 GPIO pin | P0.02 | devicetree overlay |
@@ -695,8 +706,8 @@ drains fully on reconnect, cadence resumes without manual intervention.
 |--------|----------------|------|-------|
 | DS18B20 DQ | P0.02 (Arduino D2) | P0.02 | 4.7 kΩ to 3.3 V |
 | DS18B20 VDD | 3.3 V header | — | Or parasitic (not recommended) |
-| BMP280 SDA | Arduino SDA | P0.26 | I2C pull-up on module |
-| BMP280 SCL | Arduino SCL | P0.27 | I2C pull-up on module |
+| BMP280 SDA | Arduino SDA (D14) | P0.30 | I2C pull-up on module |
+| BMP280 SCL | Arduino SCL (D15) | P0.31 | I2C pull-up on module |
 | PPK2 VOUT | VDD_nRF rail (cut jumper) | — | Source-meter mode; 3.3 V |
 
 ### 10.4 Example Serial Log (Phase 2 normal operation)

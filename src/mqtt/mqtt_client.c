@@ -16,7 +16,7 @@ LOG_MODULE_REGISTER(tracker_mqtt, CONFIG_LOG_DEFAULT_LEVEL);
 #define KEEPALIVE_SEC  60
 #define RX_BUF_SZ      512
 #define TX_BUF_SZ      512
-#define CONNACK_TIMEOUT_MS  15000
+#define CONNACK_TIMEOUT_MS  30000
 #define PUBACK_TIMEOUT_MS   10000
 
 static struct mqtt_client  client;

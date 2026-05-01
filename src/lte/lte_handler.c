@@ -51,12 +51,6 @@ int lte_handler_init(void)
 {
 	int err;
 
-	/* Manual operator selection: Vodafone Turkey MCC/MNC 28602 */
-	err = nrf_modem_at_printf("AT+COPS=1,2,\"28602\"");
-	if (err) {
-		LOG_WRN("COPS operator lock failed: %d (continuing)", err);
-	}
-
 	/* PDP context: APN = internet */
 	err = nrf_modem_at_printf("AT+CGDCONT=1,\"IP\",\"internet\"");
 	if (err) {
@@ -110,8 +104,8 @@ int lte_handler_resume(void)
 		return err;
 	}
 
-	/* Re-registration is typically fast (TAU context retained in network). */
-	err = k_sem_take(&reg_sem, K_SECONDS(30));
+	/* PSM wake-up + TAU can take up to ~60 s in poor signal conditions. */
+	err = k_sem_take(&reg_sem, K_SECONDS(60));
 	if (err) {
 		LOG_WRN("LTE re-registration timeout after GNSS");
 	}

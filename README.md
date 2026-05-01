@@ -98,7 +98,7 @@ Key options in `Kconfig` (override via `prj.conf` or `-D` on the command line):
 
 ```
 src/
-  main.c                    # Boot sequence and 60 s telemetry loop
+  main.c                    # Boot sequence, 60 s telemetry loop, non-blocking GNSS fix read
   gnss/gnss_handler.c       # Periodic GNSS in LTE-coexistence mode
   lte/lte_handler.c         # LTE-M init, APN, PSM configuration
   mqtt/mqtt_client.c        # Per-cycle TLS MQTT connect → publish → disconnect
@@ -115,11 +115,15 @@ scripts/
 
 ## GNSS and LTE coexistence
 
-The nRF9151 shares one radio between LTE-M and GNSS. This firmware uses **periodic GNSS coexistence mode** rather than switching the modem between exclusive LTE and GNSS states:
+The nRF9151 shares one radio between LTE-M and GNSS. This firmware uses **periodic GNSS coexistence mode**, configured with:
 
-- GNSS runs in the background with `nrf_modem_gnss_prio_mode_enable()`, giving it scheduling priority during LTE idle gaps.
-- LTE stays registered continuously — no re-attachment overhead per cycle.
-- A fix attempt runs once per telemetry interval. On a fix, the PVT is stored and included in the next publish. If no fix is available (e.g. indoors), the GNSS fields are `null`.
+- **Fix interval**: One attempt per telemetry cycle (matching `CONFIG_TRACKER_INTERVAL_SEC`), managed automatically by the GNSS engine without manual start/stop commands.
+- **Scheduling priority**: Enabled via `nrf_modem_gnss_prio_mode_enable()`, giving GNSS priority over LTE RRC during idle gaps—eliminating 'blocked by LTE' events that plague exclusive-mode switching.
+- **Low-accuracy mode**: Use case flag `NRF_MODEM_GNSS_USE_CASE_LOW_ACCURACY` reduces time-to-first-fix during LTE coexistence by relaxing acquisition criteria.
+- **PVT read point**: The reliable PVT data is read on `EVT_SLEEP_AFTER_FIX` (after each fix) and stored; `EVT_PVT` events (which fire ~1 s intervals during search) are ignored. This matches Nordic's recommendation for periodic-mode engines.
+- **Latest-available-fix semantics**: The telemetry cycle reads the most recent valid fix **non-blocking**; no artificial 120 s windows or re-registration delays. If no fix is available (e.g. indoors), the GNSS fields are `null`.
+- **Continuous LTE registration**: LTE remains registered between cycles under PSM (Power Saving Mode), eliminating re-attachment overhead entirely.
+- **No mode-switching API**: Unlike older designs, this firmware has no `suspend`/`resume` or `ACTIVATE_GNSS`/`ACTIVATE_LTE` mode transitions; passive coexistence is simpler and more efficient.
 
 GNSS cold-start indoors will not fix. Move the antenna outdoors or near a window for the first fix; subsequent cycles benefit from hot-start.
 

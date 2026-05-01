@@ -7,7 +7,6 @@
 
 LOG_MODULE_REGISTER(lte_handler, CONFIG_LOG_DEFAULT_LEVEL);
 
-static K_SEM_DEFINE(reg_sem, 0, 1);
 static bool lte_connected;
 
 static void lte_evt_handler(const struct lte_lc_evt *const evt)
@@ -20,7 +19,6 @@ static void lte_evt_handler(const struct lte_lc_evt *const evt)
 				evt->nw_reg_status == LTE_LC_NW_REG_REGISTERED_HOME
 					? "home" : "roaming");
 			lte_connected = true;
-			k_sem_give(&reg_sem);
 		} else if (evt->nw_reg_status == LTE_LC_NW_REG_SEARCHING) {
 			LOG_INF("LTE-M: searching...");
 		} else {
@@ -79,37 +77,6 @@ int lte_handler_init(void)
 bool lte_handler_is_connected(void)
 {
 	return lte_connected;
-}
-
-int lte_handler_suspend(void)
-{
-	lte_connected = false;
-	int err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_ACTIVATE_GNSS);
-
-	if (err) {
-		LOG_ERR("ACTIVATE_GNSS failed: %d", err);
-	}
-	return err;
-}
-
-int lte_handler_resume(void)
-{
-	/* Reset semaphore before switching mode to avoid missing the event. */
-	k_sem_reset(&reg_sem);
-
-	int err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_ACTIVATE_LTE);
-
-	if (err) {
-		LOG_ERR("ACTIVATE_LTE failed: %d", err);
-		return err;
-	}
-
-	/* PSM wake-up + TAU can take up to ~60 s in poor signal conditions. */
-	err = k_sem_take(&reg_sem, K_SECONDS(60));
-	if (err) {
-		LOG_WRN("LTE re-registration timeout after GNSS");
-	}
-	return 0;
 }
 
 int lte_handler_get_imei(char *buf, size_t len)

@@ -7,29 +7,43 @@
 
 LOG_MODULE_REGISTER(gnss_handler, CONFIG_LOG_DEFAULT_LEVEL);
 
-static K_SEM_DEFINE(gnss_fix_sem, 0, 1);
 static struct nrf_modem_gnss_pvt_data_frame last_pvt;
 static bool fix_valid;
 
 static void gnss_event_handler(int event)
 {
-	int err;
-
 	switch (event) {
 	case NRF_MODEM_GNSS_EVT_PVT:
-		err = nrf_modem_gnss_read(&last_pvt, sizeof(last_pvt),
-					  NRF_MODEM_GNSS_DATA_PVT);
-		if (err) {
-			break;
-		}
-		if (last_pvt.flags & NRF_MODEM_GNSS_PVT_FLAG_FIX_VALID) {
+		/* Fires every epoch (~1 s) — no action needed in periodic mode. */
+		break;
+
+	case NRF_MODEM_GNSS_EVT_FIX:
+		/* Fix achieved — PVT committed on SLEEP_AFTER_FIX. */
+		break;
+
+	case NRF_MODEM_GNSS_EVT_SLEEP_AFTER_FIX: {
+		/* Reliable point to read PVT: GNSS engine has committed the fix. */
+		int err = nrf_modem_gnss_read(&last_pvt, sizeof(last_pvt),
+					      NRF_MODEM_GNSS_DATA_PVT);
+		if (err == 0) {
 			fix_valid = true;
-			k_sem_give(&gnss_fix_sem);
+			LOG_INF("GNSS: fix acquired — lat=%.6f lon=%.6f acc=%.1f m",
+				last_pvt.latitude, last_pvt.longitude,
+				(double)last_pvt.accuracy);
 		}
+		break;
+	}
+
+	case NRF_MODEM_GNSS_EVT_SLEEP_AFTER_TIMEOUT:
+		LOG_DBG("GNSS: search timeout — will retry next period");
+		break;
+
+	case NRF_MODEM_GNSS_EVT_PERIODIC_WAKEUP:
+		LOG_DBG("GNSS: periodic wakeup — starting new search");
 		break;
 
 	case NRF_MODEM_GNSS_EVT_BLOCKED:
-		LOG_WRN("GNSS: blocked by LTE");
+		LOG_DBG("GNSS: blocked by LTE (transient)");
 		break;
 
 	case NRF_MODEM_GNSS_EVT_UNBLOCKED:
@@ -51,20 +65,27 @@ int gnss_handler_init(void)
 	return err;
 }
 
-int gnss_handler_start_single_fix(void)
+int gnss_handler_start(void)
 {
 	int err;
 
-	/* Reset semaphore so we wait for a NEW fix this cycle. */
-	k_sem_reset(&gnss_fix_sem);
-
-	err = nrf_modem_gnss_use_case_set(NRF_MODEM_GNSS_USE_CASE_MULTIPLE_HOT_START);
+	/* Hot-start + low-accuracy reduces TTFF when running alongside LTE. */
+	err = nrf_modem_gnss_use_case_set(
+		NRF_MODEM_GNSS_USE_CASE_MULTIPLE_HOT_START |
+		NRF_MODEM_GNSS_USE_CASE_LOW_ACCURACY);
 	if (err) {
 		LOG_ERR("GNSS use_case_set failed: %d", err);
 		return err;
 	}
 
-	/* fix_retry=0 → continuous; we stop manually after the first fix. */
+	/* Periodic mode: one fix attempt per telemetry cycle. */
+	err = nrf_modem_gnss_fix_interval_set(CONFIG_TRACKER_INTERVAL_SEC);
+	if (err) {
+		LOG_ERR("GNSS fix_interval_set failed: %d", err);
+		return err;
+	}
+
+	/* retry=0 → no per-period timeout; search until fix, then sleep. */
 	err = nrf_modem_gnss_fix_retry_set(0);
 	if (err) {
 		LOG_ERR("GNSS fix_retry_set failed: %d", err);
@@ -77,25 +98,17 @@ int gnss_handler_start_single_fix(void)
 		return err;
 	}
 
-	LOG_INF("GNSS: started single-fix attempt");
-	return 0;
-}
-
-int gnss_handler_stop(void)
-{
-	int err = nrf_modem_gnss_stop();
-
+	/* Give GNSS scheduling priority over LTE RRC — eliminates most
+	 * blocking events when LTE and GNSS compete for the radio. */
+	err = nrf_modem_gnss_prio_mode_enable();
 	if (err) {
-		LOG_ERR("GNSS stop failed: %d", err);
-	} else {
-		LOG_DBG("GNSS: stopped");
+		LOG_ERR("GNSS prio_mode_enable failed: %d", err);
+		return err;
 	}
-	return err;
-}
 
-int gnss_handler_wait_fix(int timeout_sec)
-{
-	return k_sem_take(&gnss_fix_sem, K_SECONDS(timeout_sec));
+	LOG_INF("GNSS: periodic mode started (interval=%d s, prio enabled)",
+		CONFIG_TRACKER_INTERVAL_SEC);
+	return 0;
 }
 
 void gnss_handler_get_pvt(struct nrf_modem_gnss_pvt_data_frame *pvt_out)

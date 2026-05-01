@@ -16,51 +16,6 @@ static char imei[16];
 static bool bmp_ok;
 static bool ds_ok;
 
-static void do_gnss_cycle(struct nrf_modem_gnss_pvt_data_frame *pvt_out,
-			   bool *fix_out, char *ts_out, size_t ts_len)
-{
-	int err;
-
-	err = lte_handler_suspend();
-	if (err) {
-		LOG_WRN("LTE suspend failed: %d — skipping GNSS this cycle", err);
-		*fix_out = false;
-		ts_out[0] = '\0';
-		return;
-	}
-
-	err = gnss_handler_start_single_fix();
-	if (err) {
-		LOG_WRN("GNSS start failed: %d", err);
-		*fix_out = false;
-		ts_out[0] = '\0';
-		goto resume;
-	}
-
-	err = gnss_handler_wait_fix(CONFIG_TRACKER_GNSS_TIMEOUT_SEC);
-	if (err == 0) {
-		gnss_handler_get_pvt(pvt_out);
-		gnss_handler_get_timestamp(ts_out, ts_len);
-		*fix_out = true;
-		LOG_INF("GNSS fix: lat=%.6f lon=%.6f alt=%.1f acc=%.1f",
-			pvt_out->latitude, pvt_out->longitude,
-			(double)pvt_out->altitude, (double)pvt_out->accuracy);
-	} else {
-		LOG_WRN("GNSS: no fix within %d s (using last known or null)",
-			CONFIG_TRACKER_GNSS_TIMEOUT_SEC);
-		*fix_out  = false;
-		ts_out[0] = '\0';
-	}
-
-	gnss_handler_stop();
-
-resume:
-	err = lte_handler_resume();
-	if (err) {
-		LOG_WRN("LTE resume had issues: %d (continuing anyway)", err);
-	}
-}
-
 static void drain_and_publish(void)
 {
 	static char qbuf[PAYLOAD_MAX_LEN];
@@ -81,12 +36,18 @@ static void drain_and_publish(void)
 static void telemetry_cycle(void)
 {
 	struct nrf_modem_gnss_pvt_data_frame pvt = {0};
-	bool gnss_fix;
+	bool gnss_fix = gnss_handler_has_fix();
 	char ts[32] = "";
 	static char payload_buf[PAYLOAD_MAX_LEN];
 
-	/* 1. Acquire GNSS fix (suspends/resumes LTE around it). */
-	do_gnss_cycle(&pvt, &gnss_fix, ts, sizeof(ts));
+	/* 1. Read latest GNSS fix from background periodic engine. */
+	if (gnss_fix) {
+		gnss_handler_get_pvt(&pvt);
+		gnss_handler_get_timestamp(ts, sizeof(ts));
+		LOG_INF("GNSS fix: lat=%.6f lon=%.6f alt=%.1f acc=%.1f m",
+			pvt.latitude, pvt.longitude,
+			(double)pvt.altitude, (double)pvt.accuracy);
+	}
 
 	/* 2. Read sensors. */
 	double bmp_temp = 0.0, bmp_press = 0.0, ds_temp = 0.0;
@@ -172,7 +133,7 @@ int main(void)
 	bmp_ok = (bmp280_sensor_init() == 0);
 	ds_ok  = (ds18b20_sensor_init() == 0);
 
-	/* Register GNSS handler (no mode switch, no start yet). */
+	/* Register GNSS event handler. */
 	err = gnss_handler_init();
 	if (err) {
 		LOG_ERR("GNSS handler init failed: %d", err);
@@ -197,6 +158,13 @@ int main(void)
 	err = tracker_mqtt_init(imei);
 	if (err) {
 		LOG_ERR("MQTT init failed: %d", err);
+		return err;
+	}
+
+	/* Start GNSS in periodic coexistence mode — runs alongside LTE. */
+	err = gnss_handler_start();
+	if (err) {
+		LOG_ERR("GNSS start failed: %d", err);
 		return err;
 	}
 

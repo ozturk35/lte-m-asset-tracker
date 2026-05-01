@@ -4,18 +4,13 @@
 #include <stddef.h>
 #include <nrf_modem_gnss.h>
 
-/* Register GNSS event handler. Does NOT start the engine or switch modem mode. */
+/* Register GNSS event handler. Must be called before gnss_handler_start(). */
 int gnss_handler_init(void);
 
-/* Start a single-fix attempt. Call after lte_handler_suspend(). */
-int gnss_handler_start_single_fix(void);
-
-/* Stop the GNSS engine. Call before lte_handler_resume(). */
-int gnss_handler_stop(void);
-
-/* Block until a fix is available or timeout_sec elapses.
- * Returns 0 on fix, -EAGAIN on timeout. */
-int gnss_handler_wait_fix(int timeout_sec);
+/* Start periodic GNSS in LTE-coexistence mode.
+ * Runs one fix attempt per CONFIG_TRACKER_INTERVAL_SEC with GNSS priority
+ * enabled — no LTE mode switching needed. */
+int gnss_handler_start(void);
 
 void gnss_handler_get_pvt(struct nrf_modem_gnss_pvt_data_frame *pvt_out);
 
